@@ -1,80 +1,72 @@
 
-# planwise_app.py
 import streamlit as st
 import datetime
 import pandas as pd
 
-# ---------- TITLE & INTRO ---------- #
 st.set_page_config(page_title="PlanWise", layout="wide")
-st.title("📚 PlanWise - Study Planner")
-st.markdown("Designed to help you organize, focus, and conquer your revision.")
+st.title("📚 PlanWise - Study Planner (v1.1)")
+st.markdown("Designed to help you plan study + practice time by confidence.")
 
-# ---------- USER INPUT ---------- #
-st.header("🧠 Enter Your Study Details")
+st.header("🧠 Study Setup")
 
 subjects = st.text_area("List your subjects (one per line)").split("\n")
 exam_date = st.date_input("When is your first exam?", min_value=datetime.date.today())
+study_days = st.slider("How many days per week will you study?", 1, 7, 5)
+study_hours = st.slider("Hours available per study day", 1, 12, 3)
 
-study_hours_per_day = st.slider("How many hours per day can you study?", 1, 12, 3)
-days_per_week = st.slider("How many days per week can you study?", 1, 7, 5)
+focus_mode = st.selectbox("Study Style", ["Classic", "ADHD-Friendly", "Cram Mode"])
 
-focus_mode = st.selectbox(
-    "Choose your focus style:",
-    ["Classic", "ADHD-Friendly", "Intense (Cram Mode)"]
-)
+st.subheader("📊 Confidence, Content & Practice Time per Subject")
 
-confidence_map = {}
-st.subheader("📊 How confident are you in each subject?")
+subject_data = []
 for subject in subjects:
     if subject.strip():
-        confidence_map[subject] = st.slider(f"{subject} confidence (1 = low, 5 = high)", 1, 5, 3)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            conf = st.slider(f"{subject} - Confidence", 1, 5, 3, key=subject+"_conf")
+        with col2:
+            content_hours = st.number_input(f"{subject} - Content hrs", 1, 100, 10, key=subject+"_content")
+        with col3:
+            practice_hours = st.number_input(f"{subject} - Practice hrs", 1, 100, 5, key=subject+"_practice")
+        subject_data.append({
+            "subject": subject,
+            "confidence": conf,
+            "content_hours": content_hours,
+            "practice_hours": practice_hours
+        })
 
-# ---------- PLAN GENERATION ---------- #
-def generate_study_plan(subjects, confidence_map, start_date, hours_per_day, days_per_week):
+def generate_schedule(subjects_info, total_days, hours_per_day, days_per_week):
     plan = []
-    total_days = (exam_date - start_date).days
-    total_slots = total_days * days_per_week * hours_per_day / 7
+    slots = total_days * (days_per_week / 7) * hours_per_day
 
-    weightings = {
-        subject: 6 - confidence_map[subject]  # Lower confidence = higher weight
-        for subject in subjects if subject.strip()
-    }
-    total_weight = sum(weightings.values())
+    total_weight = sum([(6 - s["confidence"]) * (s["content_hours"] + s["practice_hours"]) for s in subjects_info])
+    weight_map = {s["subject"]: ((6 - s["confidence"]) * (s["content_hours"] + s["practice_hours"])) / total_weight for s in subjects_info}
 
-    hours_per_subject = {
-        subject: round((weight / total_weight) * total_slots)
-        for subject, weight in weightings.items()
-    }
+    hour_allocations = {s["subject"]: round(slots * weight_map[s["subject"]]) for s in subjects_info}
 
-    current_date = start_date
+    current_date = datetime.date.today()
+    subject_index = 0
     while current_date <= exam_date:
-        if (current_date - start_date).days % 7 < days_per_week:
+        if (current_date - datetime.date.today()).days % 7 < days_per_week:
             for _ in range(hours_per_day):
-                for subject in sorted(hours_per_subject, key=lambda x: hours_per_subject[x], reverse=True):
-                    if hours_per_subject[subject] > 0:
-                        plan.append((current_date, subject))
-                        hours_per_subject[subject] -= 1
-                        break
+                if not subjects_info:
+                    break
+                sub = subjects_info[subject_index % len(subjects_info)]["subject"]
+                if hour_allocations[sub] > 0:
+                    plan.append((current_date, sub))
+                    hour_allocations[sub] -= 1
+                subject_index += 1
         current_date += datetime.timedelta(days=1)
 
     return pd.DataFrame(plan, columns=["Date", "Subject"])
 
-# ---------- DISPLAY STUDY PLAN ---------- #
-if st.button("📆 Generate My Plan"):
-    if not subjects or not exam_date:
-        st.warning("Please fill in all inputs.")
+if st.button("📆 Generate Plan"):
+    if not subject_data or not exam_date:
+        st.error("Fill in all fields.")
     else:
-        plan_df = generate_study_plan(subjects, confidence_map, datetime.date.today(), study_hours_per_day, days_per_week)
-        st.success("Here's your personalized study plan!")
-        st.dataframe(plan_df)
-
-        csv = plan_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Plan as CSV",
-            data=csv,
-            file_name='planwise_study_plan.csv',
-            mime='text/csv'
-        )
-
-        st.markdown("---")
-        st.markdown("✨ *Pro Tip: Revisit this page anytime to tweak your plan or adjust your confidence levels.*")
+        days = (exam_date - datetime.date.today()).days
+        df = generate_schedule(subject_data, days, study_hours, study_days)
+        st.success("✅ Your plan is ready!")
+        st.dataframe(df)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download CSV", csv, "study_schedule.csv", "text/csv")
